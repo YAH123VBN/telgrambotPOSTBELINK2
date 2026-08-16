@@ -1,191 +1,374 @@
 import os
-import re
 import json
-import asyncio
-from urllib.parse import quote
-from html import escape
-
-import aiohttp
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import re
+from telegram import (
+    Update,
+    ReplyKeyboardMarkup,
+)
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    ContextTypes, filters
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
 )
 
-# SECURITY: token is intentionally read from an environment variable.
-# Set BOT_TOKEN to the token supplied by BotFather.
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
+# =========================================================
+# تنظیمات
+# =========================================================
 
-# URL of the MAIN bot's HTTP bridge, e.g. https://your-main-bot.example.com
-MAIN_BRIDGE_URL = os.environ.get("MAIN_BRIDGE_URL", "").rstrip("/")
-MAIN_BRIDGE_KEY = os.environ.get("MAIN_BRIDGE_KEY", "").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
-OWNER_ID = int(os.environ.get("OWNER_ID", "8361990555"))
+DATA_DIR = os.getenv(
+    "RAILWAY_VOLUME_MOUNT_PATH",
+    "."
+)
 
-LINK_RE = re.compile(r'(https?://\S+|t\.me/\S+)', re.IGNORECASE)
+os.makedirs(DATA_DIR, exist_ok=True)
 
-# Per-user temporary state. The actual mappings live in the main bot.
-USER_STATE = {}
+DATA_FILE = os.path.join(
+    DATA_DIR,
+    "marked_links.json"
+)
 
-def extract_links(text):
-    links = []
-    for raw in LINK_RE.findall(text or ""):
-        links.append(raw.rstrip(".,!?؛،)]}"))
-    # preserve order, remove duplicates
-    return list(dict.fromkeys(links))
+LINK_REGEX = re.compile(
+    r'(https?://\S+|t\.me/\S+)',
+    re.IGNORECASE
+)
 
-def normalize_link(url):
-    url = (url or "").strip().rstrip(".,!?؛،)]}")
-    if url.startswith("t.me/"):
-        url = "https://" + url
-    return url
+# =========================================================
+# ذخیره و خواندن اطلاعات
+# =========================================================
 
-def authorized(user_id):
-    return user_id == OWNER_ID
+def load_data():
+    if not os.path.exists(DATA_FILE):
+        return {
+            "counter": 0,
+            "links": []
+        }
 
-async def api(method, path, payload=None):
-    if not MAIN_BRIDGE_URL or not MAIN_BRIDGE_KEY:
-        raise RuntimeError("MAIN_BRIDGE_URL یا MAIN_BRIDGE_KEY تنظیم نشده است.")
-    headers = {"X-Link-Bridge-Key": MAIN_BRIDGE_KEY}
-    timeout = aiohttp.ClientTimeout(total=20)
-    async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-        url = MAIN_BRIDGE_URL + path
-        if method == "GET":
-            async with session.get(url) as r:
-                data = await r.json(content_type=None)
-        else:
-            async with session.post(url, json=payload) as r:
-                data = await r.json(content_type=None)
-        if r.status >= 400:
-            raise RuntimeError(data.get("error", f"HTTP {r.status}"))
-        return data
+    try:
+        with open(
+            DATA_FILE,
+            "r",
+            encoding="utf-8"
+        ) as f:
+            return json.load(f)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not authorized(update.effective_user.id):
-        return
+    except Exception:
+        return {
+            "counter": 0,
+            "links": []
+        }
+
+
+def save_data(data):
+    with open(
+        DATA_FILE,
+        "w",
+        encoding="utf-8"
+    ) as f:
+        json.dump(
+            data,
+            f,
+            ensure_ascii=False,
+            indent=2
+        )
+
+
+DATA = load_data()
+
+# =========================================================
+# منوی اصلی
+# =========================================================
+
+MAIN_KEYBOARD = ReplyKeyboardMarkup(
+    [
+        ["➕ ثبت لینک"],
+        ["📦 لینک‌های آماده", "📋 همه لینک‌ها"],
+    ],
+    resize_keyboard=True
+)
+
+# =========================================================
+# پیدا کردن لینک
+# =========================================================
+
+def get_links(text):
+    links = LINK_REGEX.findall(text or "")
+
+    result = []
+
+    for link in links:
+        link = link.strip()
+        link = link.rstrip(".,!?؛،")
+
+        if link.startswith("t.me/"):
+            link = "https://" + link
+
+        if link not in result:
+            result.append(link)
+
+    return result
+
+# =========================================================
+# START
+# =========================================================
+
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    context.user_data.clear()
+
     await update.message.reply_text(
-        "🤖 بات علامت‌گذاری لینک‌ها آماده است.\n\n"
-        "روش سریع:\n"
-        "1) /topics برای دیدن موضوع‌های بات اصلی\n"
-        "2) /topic نام موضوع برای انتخاب موضوع فعال\n"
-        "3) لینک‌ها را بفرست؛ حتی چند لینک در یک پیام\n\n"
-        "هر لینک مستقیم در بات اصلی ثبت می‌شود و بعداً ربات اصلی "
-        "از روی همان لینک موضوع را پیدا می‌کند.\n\n"
-        "برای تغییر موضوع دوباره /topic بزن."
+        "👋 سلام!\n\n"
+        "🤖 بات علامت‌گذاری لینک آماده است.\n\n"
+        "➕ ثبت لینک\n"
+        "لینک بده تا برایش علامت بسازم.\n\n"
+        "📦 لینک‌های آماده\n"
+        "لینک‌هایی که علامت خورده‌اند را ببین.\n\n"
+        "📋 همه لینک‌ها\n"
+        "تمام لینک‌های ذخیره‌شده را ببین.",
+        reply_markup=MAIN_KEYBOARD
     )
 
-async def topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not authorized(update.effective_user.id):
-        return
-    try:
-        data = await api("GET", "/topics")
-        items = data.get("topics", [])
-        if not items:
-            await update.message.reply_text("📭 فعلاً موضوعی در بات اصلی ثبت نشده.")
-            return
-        lines = ["🎬 موضوع‌های موجود:\n"]
-        for i, item in enumerate(items, 1):
-            lines.append(f"{i}. {item['name']} — {item.get('label','')}")
-        await update.message.reply_text("\n".join(lines))
-    except Exception as e:
-        await update.message.reply_text(f"❌ اتصال به بات اصلی برقرار نشد:\n{e}")
+# =========================================================
+# ثبت لینک
+# =========================================================
 
-async def set_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not authorized(update.effective_user.id):
-        return
-    if not context.args:
-        await update.message.reply_text(
-            "مثال:\n/topic پاندا\n\n"
-            "یا اگر نام موضوع فاصله دارد:\n/topic پاندا رید به خودش"
-        )
-        return
-    topic = " ".join(context.args).strip()
-    USER_STATE[update.effective_user.id] = topic
+async def add_link(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    context.user_data["adding_link"] = True
+
     await update.message.reply_text(
-        f"✅ موضوع فعال شد:\n\n🎬 {topic}\n\n"
-        "حالا لینک‌ها را بفرست."
+        "➕ ثبت لینک\n\n"
+        "حالا لینک را بفرست.\n\n"
+        "می‌توانی حتی چند لینک را در یک پیام بفرستی."
     )
 
-async def clear_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not authorized(update.effective_user.id):
-        return
-    USER_STATE.pop(update.effective_user.id, None)
-    await update.message.reply_text("🧹 موضوع فعال پاک شد.")
+# =========================================================
+# نمایش لینک‌های آماده
+# =========================================================
 
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not authorized(update.effective_user.id):
-        return
-    try:
-        data = await api("GET", "/health")
-        topic = USER_STATE.get(update.effective_user.id, "—")
-        await update.message.reply_text(
-            f"🟢 اتصال به بات اصلی برقرار است.\n"
-            f"موضوع فعال: {topic}\n"
-            f"Bridge: {data.get('service','unknown')}"
-        )
-    except Exception as e:
-        await update.message.reply_text(f"🔴 اتصال مشکل دارد:\n{e}")
+async def ready_links(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    links = DATA.get("links", [])
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not authorized(update.effective_user.id):
-        return
-
-    text = update.message.text or ""
-    links = extract_links(text)
     if not links:
         await update.message.reply_text(
-            "🔗 لینکی پیدا نکردم.\n"
-            "اول /topic را بزن و بعد لینک را ارسال کن."
+            "📦 هیچ لینک آماده‌ای وجود ندارد.",
+            reply_markup=MAIN_KEYBOARD
         )
         return
 
-    topic = USER_STATE.get(update.effective_user.id)
-    if not topic:
+    ready = [
+        x for x in links
+        if not x.get("sent", False)
+    ]
+
+    if not ready:
         await update.message.reply_text(
-            "⚠️ هنوز موضوعی انتخاب نشده.\n\n"
-            "اول مثلاً بزن:\n/topic پاندا"
+            "📦 هیچ لینک آماده‌ای وجود ندارد.\n\n"
+            "همه لینک‌های قبلی ارسال شده‌اند.",
+            reply_markup=MAIN_KEYBOARD
         )
         return
 
-    success = 0
-    failed = []
-    for link in links:
-        try:
-            await api("POST", "/register-link", {
-                "url": normalize_link(link),
-                "topic_name": topic,
-                "topic_key": topic,
-                "label": topic,
-                "source": "classifier_bot",
-            })
-            success += 1
-        except Exception as e:
-            failed.append((link, str(e)))
+    text = "📦 لینک‌های آماده:\n\n"
 
-    msg = f"✅ ثبت شد: {success} لینک\n🎬 موضوع: {topic}"
-    if failed:
-        msg += "\n\n❌ ناموفق:\n" + "\n".join(
-            f"• {escape(x)} — {escape(err)}" for x, err in failed[:10]
+    for item in ready:
+        text += (
+            f"🔖 {item['marker']}\n"
+            f"🔗 {item['url']}\n\n"
         )
-    await update.message.reply_text(msg, parse_mode="HTML")
+
+    await update.message.reply_text(
+        text,
+        reply_markup=MAIN_KEYBOARD
+    )
+
+# =========================================================
+# نمایش همه
+# =========================================================
+
+async def all_links(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    links = DATA.get("links", [])
+
+    if not links:
+        await update.message.reply_text(
+            "📋 هنوز هیچ لینکی ثبت نشده.",
+            reply_markup=MAIN_KEYBOARD
+        )
+        return
+
+    text = "📋 همه لینک‌ها:\n\n"
+
+    for item in links:
+        status = (
+            "📤 ارسال شده"
+            if item.get("sent", False)
+            else "📦 آماده"
+        )
+
+        text += (
+            f"🔖 {item['marker']}\n"
+            f"🔗 {item['url']}\n"
+            f"{status}\n\n"
+        )
+
+    await update.message.reply_text(
+        text,
+        reply_markup=MAIN_KEYBOARD
+    )
+
+# =========================================================
+# دریافت پیام
+# =========================================================
+
+async def handle_text(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    text = update.message.text or ""
+
+    # -----------------------------------------
+    # دکمه‌ها
+    # -----------------------------------------
+
+    if text == "➕ ثبت لینک":
+        await add_link(update, context)
+        return
+
+    if text == "📦 لینک‌های آماده":
+        await ready_links(update, context)
+        return
+
+    if text == "📋 همه لینک‌ها":
+        await all_links(update, context)
+        return
+
+    # -----------------------------------------
+    # پیدا کردن لینک
+    # -----------------------------------------
+
+    links = get_links(text)
+
+    if not links:
+        await update.message.reply_text(
+            "❌ لینکی پیدا نکردم.\n\n"
+            "یک لینک Telegram یا لینک موردنظر را بفرست.",
+            reply_markup=MAIN_KEYBOARD
+        )
+        return
+
+    # -----------------------------------------
+    # ثبت لینک‌ها
+    # -----------------------------------------
+
+    new_items = []
+
+    for url in links:
+        already_exists = any(
+            x.get("url") == url
+            for x in DATA["links"]
+        )
+
+        if already_exists:
+            continue
+
+        DATA["counter"] += 1
+
+        marker = f"L{DATA['counter']:04d}"
+
+        item = {
+            "marker": marker,
+            "url": url,
+            "sent": False
+        }
+
+        DATA["links"].append(item)
+        new_items.append(item)
+
+    save_data(DATA)
+
+    # -----------------------------------------
+    # نتیجه
+    # -----------------------------------------
+
+    if not new_items:
+        await update.message.reply_text(
+            "⚠️ این لینک‌ها قبلاً ثبت شده‌اند.",
+            reply_markup=MAIN_KEYBOARD
+        )
+        return
+
+    result = "✅ لینک ثبت شد!\n\n"
+
+    for item in new_items:
+        result += (
+            f"🔖 علامت: {item['marker']}\n"
+            f"🔗 لینک: {item['url']}\n\n"
+        )
+
+    result += (
+        "📦 لینک داخل بخش «لینک‌های آماده» قرار گرفت."
+    )
+
+    await update.message.reply_text(
+        result,
+        reply_markup=MAIN_KEYBOARD
+    )
+
+# =========================================================
+# MAIN
+# =========================================================
 
 def main():
     if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN تنظیم نشده است.")
-    if not MAIN_BRIDGE_URL or not MAIN_BRIDGE_KEY:
         raise RuntimeError(
-            "MAIN_BRIDGE_URL و MAIN_BRIDGE_KEY را تنظیم کن."
+            "❌ BOT_TOKEN در Railway تنظیم نشده."
         )
 
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("topics", topics))
-    app.add_handler(CommandHandler("topic", set_topic))
-    app.add_handler(CommandHandler("clear", clear_topic))
-    app.add_handler(CommandHandler("status", status))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    print("🤖 Link classifier bot started")
+    print("================================")
+    print("🤖 LINK MARKER BOT")
+    print("================================")
+    print("📁 Data:", DATA_FILE)
+    print("📦 Links:", len(DATA.get("links", [])))
+    print("================================")
+
+    app = (
+        Application
+        .builder()
+        .token(BOT_TOKEN)
+        .build()
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "start",
+            start
+        )
+    )
+
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            handle_text
+        )
+    )
+
+    print("🚀 Bot started...")
+
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
