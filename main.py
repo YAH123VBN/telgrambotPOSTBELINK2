@@ -22,8 +22,13 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [
         ["➕ ثبت لینک"],
         ["📦 لینک‌های آماده", "📋 همه لینک‌ها"],
-        ["🎭 سبک‌های من", "🔁 سبک قبلی"],
+        ["🎭 دسته‌ها", "🔁 آخرین دسته"],
     ],
+    resize_keyboard=True
+)
+
+CATEGORY_KEYBOARD = ReplyKeyboardMarkup(
+    [["🇮🇷 وطنی", "🌍 خارجی"], ["❌ لغو"]],
     resize_keyboard=True
 )
 
@@ -34,17 +39,18 @@ CANCEL_KEYBOARD = ReplyKeyboardMarkup(
 
 def load_data():
     if not os.path.exists(DATA_FILE):
-        return {"counter": 0, "links": [], "styles": [], "last_style": ""}
+        return {"counter": 0, "links": [], "styles": [], "last_category": "", "last_subcategory": ""}
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         data.setdefault("counter", 0)
         data.setdefault("links", [])
         data.setdefault("styles", [])
-        data.setdefault("last_style", "")
+        data.setdefault("last_category", data.get("last_style", ""))
+        data.setdefault("last_subcategory", "")
         return data
     except Exception:
-        return {"counter": 0, "links": [], "styles": [], "last_style": ""}
+        return {"counter": 0, "links": [], "styles": [], "last_category": "", "last_subcategory": ""}
 
 DATA = load_data()
 
@@ -68,31 +74,59 @@ def get_links(text):
             result.append(link)
     return result
 
-def normalize_style(text):
+def normalize_text(text):
     return " ".join((text or "").strip().split())
 
-def find_style(name):
-    name = normalize_style(name)
+def category_name(text):
+    t = normalize_text(text)
+    if t in {"🇮🇷 وطنی", "وطنی"}:
+        return "وطنی"
+    if t in {"🌍 خارجی", "خارجی"}:
+        return "خارجی"
+    return t
+
+def get_subcategories(category):
+    out = []
+    for item in DATA.get("styles", []):
+        if isinstance(item, dict):
+            c = normalize_text(item.get("category") or "")
+            sub = normalize_text(item.get("subcategory") or item.get("name") or "")
+            if c.casefold() == normalize_text(category).casefold() and sub and sub.casefold() not in {x.casefold() for x in out}:
+                out.append(sub)
+    return out
+
+def find_style(category, subcategory):
+    c = normalize_text(category).casefold()
+    sub = normalize_text(subcategory).casefold()
     for style in DATA["styles"]:
-        if normalize_style(style["name"]).casefold() == name.casefold():
-            return style
+        if isinstance(style, dict):
+            sc = normalize_text(style.get("category") or "").casefold()
+            ss = normalize_text(style.get("subcategory") or style.get("name") or "").casefold()
+            if sc == c and ss == sub:
+                return style
     return None
 
-def style_keyboard():
+def subcategory_keyboard(category):
+    subs = get_subcategories(category)
     rows = []
-    styles = DATA.get("styles", [])
-    for i in range(0, len(styles), 2):
-        row = ["🎭 " + styles[i]["name"]]
-        if i + 1 < len(styles):
-            row.append("🎭 " + styles[i + 1]["name"])
+    for i in range(0, len(subs), 2):
+        row = ["🎯 " + subs[i]]
+        if i + 1 < len(subs):
+            row.append("🎯 " + subs[i + 1])
         rows.append(row)
-    if DATA.get("last_style"):
-        rows.append(["🔁 سبک قبلی"])
-    rows.append(["✏️ وارد کردن سبک جدید"])
-    rows.append(["❌ لغو"])
+    rows.append(["✏️ مدل جدید"])
+    rows.append(["🔙 تغییر نوع", "❌ لغو"] )
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
-def register_link_in_main_bot(url, style_name, marker):
+def categories_text():
+    counts = {"وطنی": 0, "خارجی": 0}
+    for item in DATA.get("links", []):
+        c = item.get("category") or item.get("style", "")
+        if c in counts:
+            counts[c] += 1
+    return "🎭 دسته‌ها:\n\n🇮🇷 وطنی: %d لینک\n🌍 خارجی: %d لینک" % (counts["وطنی"], counts["خارجی"])
+
+def register_link_in_main_bot(url, category, subcategory, marker):
     if not MAIN_BOT_URL:
         raise RuntimeError("MAIN_BOT_URL تنظیم نشده است.")
     if not LINK_BRIDGE_KEY:
@@ -100,8 +134,10 @@ def register_link_in_main_bot(url, style_name, marker):
 
     payload = json.dumps({
         "url": normalize_link(url),
-        "topic_name": style_name,
-        "topic_key": style_name,
+        "topic_name": category,
+        "topic_key": f"{category}|{subcategory}",
+        "category": category,
+        "subcategory": subcategory,
         "label": marker,
         "source": "link-marker-bot",
     }, ensure_ascii=False).encode("utf-8")
@@ -131,8 +167,8 @@ def register_link_in_main_bot(url, style_name, marker):
     except URLError as e:
         raise RuntimeError("اتصال به ربات اصلی برقرار نشد: " + str(e.reason))
 
-async def register_link_async(url, style_name, marker):
-    return await asyncio.to_thread(register_link_in_main_bot, url, style_name, marker)
+async def register_link_async(url, category, subcategory, marker):
+    return await asyncio.to_thread(register_link_in_main_bot, url, category, subcategory, marker)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
@@ -187,23 +223,25 @@ async def all_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"🔖 {item['marker']}\n🎭 {item.get('style', '—')}\n🔗 {item['url']}\n{status}\n\n"
     await update.message.reply_text(text, reply_markup=MAIN_KEYBOARD)
 
-async def save_links_with_style(update, context, style_name):
+async def save_links_with_style(update, context, category, subcategory):
     links = context.user_data.get("pending_links", [])
-    style_name = normalize_style(style_name)
+    category = category_name(category)
+    subcategory = normalize_text(subcategory)
     if not links:
         context.user_data.clear()
         await update.message.reply_text("❌ لینکی برای ثبت وجود ندارد.", reply_markup=MAIN_KEYBOARD)
         return
-    if not style_name:
-        await update.message.reply_text("❌ نام سبک خالی است.")
+    if not category or not subcategory:
+        await update.message.reply_text("❌ نوع و مدل باید مشخص باشند.")
         return
 
-    style = find_style(style_name)
+    style = find_style(category, subcategory)
     if style is None:
-        style = {"name": style_name, "post_count": 0, "last_link_marker": ""}
+        style = {"category": category, "subcategory": subcategory, "name": subcategory, "post_count": 0, "last_link_marker": ""}
         DATA["styles"].append(style)
 
-    DATA["last_style"] = style_name
+    DATA["last_category"] = category
+    DATA["last_subcategory"] = subcategory
     created, failed = [], []
 
     for url in links:
@@ -213,17 +251,14 @@ async def save_links_with_style(update, context, style_name):
 
         DATA["counter"] += 1
         marker = f"L{DATA['counter']:06d}"
-
         try:
-            await register_link_async(url, style_name, marker)
+            await register_link_async(url, category, subcategory, marker)
             item = {
-                "marker": marker,
-                "url": url,
-                "style": style_name,
-                "topic_name": style_name,
-                "topic_key": style_name,
-                "used": False,
-                "synced": True,
+                "marker": marker, "url": url,
+                "category": category, "subcategory": subcategory,
+                "style": subcategory, "topic_name": category,
+                "topic_key": f"{category}|{subcategory}",
+                "used": False, "synced": True,
             }
             DATA["links"].append(item)
             style["post_count"] += 1
@@ -235,19 +270,16 @@ async def save_links_with_style(update, context, style_name):
 
     save_data()
     context.user_data.clear()
-
     result = ""
     if created:
-        result = "✅ ثبت شد و به ربات اصلی وصل شد.\n\n"
+        result = "✅ لینک‌ها ثبت شدند و دسته‌بندی کامل به ربات اصلی منتقل شد.\n\n"
         for item in created:
-            result += f"🔖 {item['marker']}\n🎭 سبک: {item['style']}\n🔗 {item['url']}\n\n"
-        result += "📦 لینک در لیست آماده قرار گرفت و ربات اصلی همین سبک را برای این لینک می‌شناسد."
-
+            result += f"🔖 {item['marker']}\n🇮🇷/🌍 نوع: {item['category']}\n🎯 مدل: {item['subcategory']}\n🔗 {item['url']}\n\n"
+        result += "📦 حالا ربات اصلی می‌داند این لینک دقیقاً متعلق به همین نوع و مدل است."
     if failed:
         result += "\n\n⚠️ بعضی لینک‌ها ثبت نشدند:\n\n"
         for url, reason in failed:
             result += f"🔗 {url}\n❌ {reason}\n\n"
-
     await update.message.reply_text(result or "❌ هیچ لینکی ثبت نشد.", reply_markup=MAIN_KEYBOARD)
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -260,12 +292,27 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await ready_links(update, context); return
     if text == "📋 همه لینک‌ها":
         await all_links(update, context); return
-    if text == "🎭 سبک‌های من":
-        await show_styles(update, context); return
+    if text == "🎭 دسته‌ها":
+        await update.message.reply_text(categories_text(), reply_markup=MAIN_KEYBOARD); return
+    if text == "🔁 آخرین دسته":
+        c = DATA.get("last_category", "")
+        s = DATA.get("last_subcategory", "")
+        if not c or not s:
+            await update.message.reply_text("❌ هنوز دسته قبلی ثبت نشده.", reply_markup=MAIN_KEYBOARD); return
+        links = context.user_data.get("pending_links", [])
+        if links:
+            await save_links_with_style(update, context, c, s)
+        else:
+            await update.message.reply_text(f"🔁 آخرین دسته: {c} → {s}", reply_markup=MAIN_KEYBOARD)
+        return
 
-    if text in {"❌ لغو", "❌ لغو ثبت"}:
-        context.user_data.clear()
-        await update.message.reply_text("❌ عملیات لغو شد.", reply_markup=MAIN_KEYBOARD)
+    if text in {"❌ لغو", "🔙 تغییر نوع"}:
+        if text == "🔙 تغییر نوع" and context.user_data.get("pending_links"):
+            context.user_data["state"] = "waiting_category"
+            await update.message.reply_text("🎭 نوع اصلی را انتخاب کن:", reply_markup=CATEGORY_KEYBOARD)
+        else:
+            context.user_data.clear()
+            await update.message.reply_text("❌ عملیات لغو شد.", reply_markup=MAIN_KEYBOARD)
         return
 
     if state == "waiting_links":
@@ -274,45 +321,52 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ لینکی پیدا نکردم. لینک Telegram یا https بفرست.")
             return
         context.user_data["pending_links"] = links
-        context.user_data["state"] = "waiting_style"
+        context.user_data["state"] = "waiting_category"
+        await update.message.reply_text("🎭 نوع اصلی این لینک‌ها را انتخاب کن:", reply_markup=CATEGORY_KEYBOARD)
+        return
+
+    if state == "waiting_category":
+        c = category_name(text)
+        if c not in {"وطنی", "خارجی"}:
+            await update.message.reply_text("❌ فقط «وطنی» یا «خارجی» را انتخاب کن.", reply_markup=CATEGORY_KEYBOARD)
+            return
+        context.user_data["category"] = c
+        context.user_data["state"] = "waiting_subcategory"
         await update.message.reply_text(
-            "🎭 سبک این لینک را انتخاب کن:",
-            reply_markup=style_keyboard()
+            f"{('🇮🇷' if c == 'وطنی' else '🌍')} {c} انتخاب شد.\n\n🎯 حالا مدل/موضوع را انتخاب کن:",
+            reply_markup=subcategory_keyboard(c)
         )
         return
 
-    if state == "waiting_style":
-        if text == "🔁 سبک قبلی":
-            last = DATA.get("last_style", "")
-            if not last:
-                await update.message.reply_text("❌ سبک قبلی وجود ندارد.")
-                return
-            await save_links_with_style(update, context, last)
+    if state == "waiting_subcategory":
+        if text == "✏️ مدل جدید":
+            context.user_data["state"] = "waiting_new_subcategory"
+            await update.message.reply_text("✏️ اسم مدل جدید را بفرست.\nمثال: فوتبال", reply_markup=CANCEL_KEYBOARD)
             return
-
-        if text.startswith("🎭 "):
-            await save_links_with_style(update, context, text[2:].strip())
+        if text.startswith("🎯 "):
+            sub = text[2:].strip()
+        else:
+            sub = normalize_text(text)
+        if not sub:
+            await update.message.reply_text("❌ مدل خالی است.")
             return
-
-        if text == "✏️ وارد کردن سبک جدید":
-            context.user_data["state"] = "waiting_new_style"
-            await update.message.reply_text(
-                "✏️ نام سبک جدید را بفرست.\nمثال: وطنی",
-                reply_markup=CANCEL_KEYBOARD
-            )
-            return
-
-        await update.message.reply_text("🎭 یکی از گزینه‌های منو را انتخاب کن.")
+        await save_links_with_style(update, context, context.user_data.get("category", ""), sub)
         return
 
-    if state == "waiting_new_style":
-        if get_links(text):
-            await update.message.reply_text("❌ اینجا باید نام سبک را بفرستی، نه لینک.")
+    if state == "waiting_new_subcategory":
+        sub = normalize_text(text)
+        if not sub:
+            await update.message.reply_text("❌ اسم مدل خالی است.")
             return
-        await save_links_with_style(update, context, text)
+        await save_links_with_style(update, context, context.user_data.get("category", ""), sub)
         return
 
-    await update.message.reply_text("از منوی پایین استفاده کن 👇", reply_markup=MAIN_KEYBOARD)
+    links = get_links(text)
+    if not links:
+        await update.message.reply_text("از منوی پایین استفاده کن 👇", reply_markup=MAIN_KEYBOARD)
+        return
+
+    await update.message.reply_text("ℹ️ برای ثبت لینک، اول «➕ ثبت لینک» را بزن.", reply_markup=MAIN_KEYBOARD)
 
 def main():
     if not BOT_TOKEN:
