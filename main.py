@@ -361,12 +361,19 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await save_links_with_style(update, context, context.user_data.get("category", ""), sub)
         return
 
+    # Convenience: a raw link can start the registration flow directly.
     links = get_links(text)
-    if not links:
-        await update.message.reply_text("از منوی پایین استفاده کن 👇", reply_markup=MAIN_KEYBOARD)
+    if links:
+        context.user_data.clear()
+        context.user_data["pending_links"] = links
+        context.user_data["state"] = "waiting_category"
+        await update.message.reply_text(
+            "🎭 نوع اصلی این لینک‌ها را انتخاب کن:",
+            reply_markup=CATEGORY_KEYBOARD
+        )
         return
 
-    await update.message.reply_text("ℹ️ برای ثبت لینک، اول «➕ ثبت لینک» را بزن.", reply_markup=MAIN_KEYBOARD)
+    await update.message.reply_text("از منوی پایین استفاده کن 👇", reply_markup=MAIN_KEYBOARD)
 
 def main():
     if not BOT_TOKEN:
