@@ -207,23 +207,33 @@ async def show_ready(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not ready:
         await update.message.reply_text("📦 لینک آماده‌ای وجود ندارد.", reply_markup=MAIN_KEYBOARD)
         return
-    lines = ["📦 لینک‌های آماده:\n"]
-    for x in ready[:100]:
-        lines.append(f"🔖 {x['marker']} | {x.get('category', '—')}\n🔗 {x['url']}")
-    if len(ready) > 100:
-        lines.append(f"\n... و {len(ready)-100} لینک دیگر")
-    await update.message.reply_text("\n\n".join(lines), reply_markup=MAIN_KEYBOARD)
+    await update.message.reply_text(
+        f"📦 {len(ready)} لینک آماده است. هر لینک در پیام جداگانه:",
+        reply_markup=MAIN_KEYBOARD
+    )
+    for x in ready:
+        await update.message.reply_text(
+            f"🔖 {x['marker']} | {x.get('category', '—')} | 📦 آماده\n🔗 {x['url']}",
+            disable_web_page_preview=True
+        )
+        await asyncio.sleep(0.04)
 
 
 async def show_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not DATA["links"]:
         await update.message.reply_text("📋 هنوز لینکی ثبت نشده.", reply_markup=MAIN_KEYBOARD)
         return
-    lines = ["📋 همه لینک‌ها:\n"]
-    for x in DATA["links"][-100:]:
+    await update.message.reply_text(
+        f"📋 {len(DATA['links'])} لینک ثبت شده. هر لینک در پیام جداگانه:",
+        reply_markup=MAIN_KEYBOARD
+    )
+    for x in DATA["links"]:
         status = "📤 استفاده شده" if x.get("used") else "📦 آماده"
-        lines.append(f"🔖 {x['marker']} | {x.get('category', '—')} | {status}\n🔗 {x['url']}")
-    await update.message.reply_text("\n\n".join(lines), reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text(
+            f"🔖 {x['marker']} | {x.get('category', '—')} | {status}\n🔗 {x['url']}",
+            disable_web_page_preview=True
+        )
+        await asyncio.sleep(0.04)
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
