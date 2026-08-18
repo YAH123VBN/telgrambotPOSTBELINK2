@@ -65,7 +65,7 @@ def main_keyboard():
 
 def topic_keyboard():
     rows = [DATA["topics"][i:i+2] for i in range(0, len(DATA["topics"]), 2)]
-    rows.append(["➕ ساخت موضوع", "❌ لغو"])
+    rows.append(["➕ ساخت موضوع", "🔙 برگشت"])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
@@ -246,16 +246,25 @@ async def show_links(update):
         await update.message.reply_text("لینکی ثبت نشده.")
         return
 
-    text = "📦 لینک‌ها:\n\n"
+    grouped = {}
+    order = []
 
     for item in DATA["links"][-50:]:
-        text += (
-            f"#{item['id']}\n"
-            f"📂 {item['topic']}\n"
-            f"🔗 {item['url']}\n\n"
-        )
+        topic = item["topic"]
+        if topic not in grouped:
+            grouped[topic] = []
+            order.append(topic)
+        grouped[topic].append(item)
 
-    await update.message.reply_text(text)
+    text = "📦 لینک‌ها:\n\n"
+
+    for topic in order:
+        text += f"📂 {topic}\n"
+        for item in grouped[topic]:
+            text += f"#{item['id']} 🔗 {item['url']}\n"
+        text += "\n"
+
+    await update.message.reply_text(text.strip())
 
 
 async def show_stats(update):
