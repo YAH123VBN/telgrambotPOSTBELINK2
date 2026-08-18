@@ -1,7 +1,7 @@
 import os
 import json
 import re
-from telegram import Update, ReplyKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, BotCommand
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -11,7 +11,9 @@ from telegram.ext import (
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "TOKEN_HERE")
-DATA_FILE = "data.json"
+# روی Railway یک Volume بساز و مسیرش رو داخل متغیر محیطی DATA_FILE بده
+# مثلا: DATA_FILE=/data/data.json  -- تا اطلاعات بین دیپلوی‌ها پاک نشه.
+DATA_FILE = os.getenv("DATA_FILE", "data.json")
 
 LINK_REGEX = re.compile(r"(https?://\S+|t\.me/\S+)", re.IGNORECASE)
 
@@ -48,6 +50,10 @@ DATA = load_data()
 
 
 def save_data():
+    dir_name = os.path.dirname(DATA_FILE)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
+
     temp_file = DATA_FILE + ".tmp"
     with open(temp_file, "w", encoding="utf-8") as f:
         json.dump(DATA, f, ensure_ascii=False, indent=2)
@@ -122,6 +128,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "ربات مدیریت لینک آماده است.",
         reply_markup=main_keyboard()
     )
+
+
+async def backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not os.path.exists(DATA_FILE):
+        await update.message.reply_text("هنوز فایل داده‌ای برای بکاپ وجود ندارد.")
+        return
+
+    with open(DATA_FILE, "rb") as f:
+        await update.message.reply_document(
+            document=f,
+            filename="data.json",
+            caption="📦 بکاپ اطلاعات ربات (موضوع‌ها و لینک‌ها)"
+        )
 
 
 async def create_topic(update, name):
@@ -440,6 +459,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("دستور نامعتبر است.", reply_markup=main_keyboard())
 
 
+async def set_commands(app):
+    await app.bot.set_my_commands([
+        BotCommand("start", "استارت ربات"),
+        BotCommand("backup", "گرفتن بکاپ از اطلاعات ربات"),
+    ])
+
+
 def main():
     if not BOT_TOKEN or BOT_TOKEN == "TOKEN_HERE":
         raise RuntimeError(
@@ -447,9 +473,10 @@ def main():
             "با نام BOT_TOKEN قرار بده."
         )
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(set_commands).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("backup", backup))
 
     app.add_handler(
         MessageHandler(
