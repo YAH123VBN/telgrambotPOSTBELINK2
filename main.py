@@ -56,30 +56,31 @@ def save_data():
 
 
 def main_keyboard():
-    return ReplyKeyboardMarkup(
-        [
-            ["📂 انتخاب موضوع"],
-            ["➕ ساخت موضوع", "🗑 حذف موضوع"],
-            ["📋 موضوع‌ها", "📦 لینک‌ها"],
-            ["📊 آمار"],
-        ],
-        resize_keyboard=True,
-    )
+    rows = [["📂 انتخاب موضوع"], ["➕ ساخت موضوع", "🗑 حذف موضوع"],
+            ["📋 موضوع‌ها", "📦 لینک‌ها"], ["📊 آمار"]]
+    if DATA["active_topic"]:
+        rows.insert(1, ["🔙 خروج از موضوع"])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
 def topic_keyboard():
-    rows = []
-    topics = DATA["topics"]
-
-    for i in range(0, len(topics), 2):
-        rows.append(topics[i:i + 2])
-
-    rows.append(["➕ ساخت موضوع"])
-
-    if DATA["active_topic"]:
-        rows.append(["🔙 خروج از موضوع"])
-
+    rows = [DATA["topics"][i:i+2] for i in range(0, len(DATA["topics"]), 2)]
+    rows.append(["➕ ساخت موضوع", "❌ لغو"])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
+def delete_topic_keyboard():
+    rows = [DATA["topics"][i:i+2] for i in range(0, len(DATA["topics"]), 2)]
+    rows.append(["❌ لغو"])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
+def create_topic_keyboard():
+    return ReplyKeyboardMarkup([["❌ لغو"]], resize_keyboard=True)
+
+
+def section_keyboard():
+    return ReplyKeyboardMarkup([["🔙 برگشت"]], resize_keyboard=True)
 
 
 def extract_links(text):
@@ -273,45 +274,66 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     state = context.user_data.get("state")
 
+    if text == "❌ لغو":
+        context.user_data.clear()
+        await update.message.reply_text("❌ عملیات لغو شد.", reply_markup=main_keyboard())
+        return
+
+    if text == "🔙 برگشت":
+        context.user_data.clear()
+        await update.message.reply_text("🔙 برگشت به منوی اصلی.", reply_markup=main_keyboard())
+        return
+
     if state == "create_topic":
         context.user_data.clear()
         await create_topic(update, text)
         return
 
     if state == "delete_topic":
-        context.user_data.clear()
-        await delete_topic(update, text)
+        if text in DATA["topics"]:
+            context.user_data.clear()
+            await delete_topic(update, text)
+        else:
+            await update.message.reply_text("لطفاً یکی از موضوع‌های موجود را انتخاب کن.",
+                                            reply_markup=delete_topic_keyboard())
         return
 
     if state == "select_topic":
-        context.user_data.clear()
-        await select_topic(update, text)
+        if text in DATA["topics"]:
+            context.user_data.clear()
+            await select_topic(update, text)
+        else:
+            await update.message.reply_text("لطفاً یکی از موضوع‌های موجود را انتخاب کن.",
+                                            reply_markup=topic_keyboard())
         return
 
     if text == "➕ ساخت موضوع":
+        context.user_data.clear()
         context.user_data["state"] = "create_topic"
-        await update.message.reply_text("نام موضوع را ارسال کن:")
+        await update.message.reply_text("➕ نام موضوع جدید را ارسال کن:",
+                                        reply_markup=create_topic_keyboard())
         return
 
     if text == "🗑 حذف موضوع":
+        context.user_data.clear()
+        if not DATA["topics"]:
+            await update.message.reply_text("موضوعی برای حذف وجود ندارد.",
+                                            reply_markup=main_keyboard())
+            return
         context.user_data["state"] = "delete_topic"
-        await update.message.reply_text("نام موضوع را ارسال کن:")
+        await update.message.reply_text("🗑 موضوع موردنظر برای حذف را انتخاب کن:",
+                                        reply_markup=delete_topic_keyboard())
         return
 
     if text == "📂 انتخاب موضوع":
         context.user_data.clear()
-
         if not DATA["topics"]:
-            await update.message.reply_text(
-                "موضوعی وجود ندارد. اول یک موضوع بساز.",
-                reply_markup=main_keyboard()
-            )
+            await update.message.reply_text("موضوعی وجود ندارد. اول یک موضوع بساز.",
+                                            reply_markup=main_keyboard())
             return
-
-        await update.message.reply_text(
-            "📂 موضوع موردنظر را انتخاب کن:",
-            reply_markup=topic_keyboard()
-        )
+        context.user_data["state"] = "select_topic"
+        await update.message.reply_text("📂 موضوع موردنظر را انتخاب کن:",
+                                        reply_markup=topic_keyboard())
         return
 
     if text == "🔙 خروج از موضوع":
@@ -319,7 +341,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await exit_topic(update)
         return
 
-    # Topic buttons are handled directly, so no second selection is needed.
     if text in DATA["topics"]:
         context.user_data.clear()
         await select_topic(update, text)
@@ -327,26 +348,25 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text == "📋 موضوع‌ها":
         await show_topics(update)
+        await update.message.reply_text("منوی موضوع‌ها:", reply_markup=section_keyboard())
         return
 
     if text == "📦 لینک‌ها":
         await show_links(update)
+        await update.message.reply_text("منوی لینک‌ها:", reply_markup=section_keyboard())
         return
 
     if text == "📊 آمار":
         await show_stats(update)
+        await update.message.reply_text("منوی آمار:", reply_markup=section_keyboard())
         return
 
     links = extract_links(text)
-
     if links:
         await save_links(update, links)
         return
 
-    await update.message.reply_text(
-        "دستور نامعتبر است.",
-        reply_markup=main_keyboard()
-    )
+    await update.message.reply_text("دستور نامعتبر است.", reply_markup=main_keyboard())
 
 
 def main():
