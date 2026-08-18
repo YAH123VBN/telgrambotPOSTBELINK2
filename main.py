@@ -67,6 +67,21 @@ def main_keyboard():
     )
 
 
+def topic_keyboard():
+    rows = []
+    topics = DATA["topics"]
+
+    for i in range(0, len(topics), 2):
+        rows.append(topics[i:i + 2])
+
+    rows.append(["➕ ساخت موضوع"])
+
+    if DATA["active_topic"]:
+        rows.append(["🔙 خروج از موضوع"])
+
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
 def extract_links(text):
     result = []
 
@@ -110,9 +125,14 @@ async def create_topic(update, name):
 
     save_data()
 
+    # After creating a topic, enter it automatically.
+    DATA["active_topic"] = name
+    save_data()
+
     await update.message.reply_text(
-        f"✅ موضوع «{name}» ساخته شد.",
-        reply_markup=main_keyboard()
+        f"✅ موضوع «{name}» ساخته شد و فعال شد.\n"
+        "حالا هر تعداد لینک بفرستی، همه داخل همین موضوع ذخیره می‌شوند.",
+        reply_markup=topic_keyboard()
     )
 
 
@@ -137,7 +157,7 @@ async def delete_topic(update, name):
 
     await update.message.reply_text(
         "✅ موضوع حذف شد.",
-        reply_markup=main_keyboard()
+        reply_markup=topic_keyboard() if DATA["active_topic"] else main_keyboard()
     )
 
 
@@ -159,14 +179,28 @@ async def select_topic(update, topic):
     topic = topic.strip()
 
     if topic not in DATA["topics"]:
-        await update.message.reply_text("موضوع وجود ندارد.")
+        await update.message.reply_text(
+            "موضوع را از دکمه‌های موجود انتخاب کن.",
+            reply_markup=topic_keyboard()
+        )
         return
 
     DATA["active_topic"] = topic
     save_data()
 
     await update.message.reply_text(
-        f"✅ موضوع فعال: {topic}",
+        f"✅ وارد موضوع «{topic}» شدی.\n"
+        "حالا هر تعداد لینک بفرستی، بدون انتخاب دوباره موضوع ذخیره می‌شوند.",
+        reply_markup=topic_keyboard()
+    )
+
+
+async def exit_topic(update):
+    DATA["active_topic"] = ""
+    save_data()
+
+    await update.message.reply_text(
+        "🔙 از موضوع خارج شدی.",
         reply_markup=main_keyboard()
     )
 
@@ -201,8 +235,8 @@ async def save_links(update, links):
     save_data()
 
     await update.message.reply_text(
-        f"✅ {count} لینک ذخیره شد.",
-        reply_markup=main_keyboard()
+        f"✅ {count} لینک ذخیره شد در موضوع «{topic}».",
+        reply_markup=topic_keyboard()
     )
 
 
@@ -265,8 +299,30 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if text == "📂 انتخاب موضوع":
-        context.user_data["state"] = "select_topic"
-        await update.message.reply_text("نام موضوع را ارسال کن:")
+        context.user_data.clear()
+
+        if not DATA["topics"]:
+            await update.message.reply_text(
+                "موضوعی وجود ندارد. اول یک موضوع بساز.",
+                reply_markup=main_keyboard()
+            )
+            return
+
+        await update.message.reply_text(
+            "📂 موضوع موردنظر را انتخاب کن:",
+            reply_markup=topic_keyboard()
+        )
+        return
+
+    if text == "🔙 خروج از موضوع":
+        context.user_data.clear()
+        await exit_topic(update)
+        return
+
+    # Topic buttons are handled directly, so no second selection is needed.
+    if text in DATA["topics"]:
+        context.user_data.clear()
+        await select_topic(update, text)
         return
 
     if text == "📋 موضوع‌ها":
