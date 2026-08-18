@@ -83,6 +83,23 @@ def section_keyboard():
     return ReplyKeyboardMarkup([["🔙 برگشت"]], resize_keyboard=True)
 
 
+def links_topic_keyboard():
+    rows = [DATA["topics"][i:i+2] for i in range(0, len(DATA["topics"]), 2)]
+    rows.append(["🔙 برگشت"])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
+def topic_links_action_keyboard():
+    return ReplyKeyboardMarkup(
+        [["🗑 حذف همه لینک‌های این موضوع"], ["🔙 برگشت"]],
+        resize_keyboard=True
+    )
+
+
+def confirm_delete_links_keyboard():
+    return ReplyKeyboardMarkup([["✅ بله، حذف کن", "❌ لغو"]], resize_keyboard=True)
+
+
 def extract_links(text):
     result = []
 
@@ -241,30 +258,38 @@ async def save_links(update, links):
     )
 
 
-async def show_links(update):
-    if not DATA["links"]:
-        await update.message.reply_text("لینکی ثبت نشده.")
-        return
+async def show_topic_links(update, topic):
+    items = [x for x in DATA["links"] if x["topic"] == topic]
 
-    grouped = {}
-    order = []
+    if not items:
+        await update.message.reply_text(f"لینکی در موضوع «{topic}» ثبت نشده.")
+    else:
+        for item in items[-50:]:
+            await update.message.reply_text(f"📂 {topic}\n🔗 {item['url']}")
 
-    for item in DATA["links"][-50:]:
-        topic = item["topic"]
-        if topic not in grouped:
-            grouped[topic] = []
-            order.append(topic)
-        grouped[topic].append(item)
+    await update.message.reply_text(
+        f"📦 لینک‌های موضوع «{topic}»",
+        reply_markup=topic_links_action_keyboard()
+    )
 
-    text = "📦 لینک‌ها:\n\n"
 
-    for topic in order:
-        text += f"📂 {topic}\n"
-        for item in grouped[topic]:
-            text += f"#{item['id']} 🔗 {item['url']}\n"
-        text += "\n"
+async def delete_topic_links(update, topic):
+    before = len(DATA["links"])
+    DATA["links"] = [x for x in DATA["links"] if x["topic"] != topic]
+    removed = before - len(DATA["links"])
 
-    await update.message.reply_text(text.strip())
+    DATA["logs"].append({
+        "action": "delete_topic_links",
+        "topic": topic,
+        "count": removed
+    })
+
+    save_data()
+
+    await update.message.reply_text(
+        f"✅ {removed} لینک از موضوع «{topic}» حذف شد.",
+        reply_markup=main_keyboard()
+    )
 
 
 async def show_stats(update):
@@ -316,6 +341,38 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                             reply_markup=topic_keyboard())
         return
 
+    if state == "view_links":
+        if text in DATA["topics"]:
+            context.user_data["state"] = "viewing_topic_links"
+            context.user_data["view_topic"] = text
+            await show_topic_links(update, text)
+        else:
+            await update.message.reply_text("لطفاً یکی از موضوع‌های موجود را انتخاب کن.",
+                                            reply_markup=links_topic_keyboard())
+        return
+
+    if state == "viewing_topic_links":
+        topic = context.user_data.get("view_topic", "")
+        if text == "🗑 حذف همه لینک‌های این موضوع":
+            context.user_data["state"] = "confirm_delete_links"
+            await update.message.reply_text(
+                f"⚠️ مطمئنی می‌خوای همه لینک‌های «{topic}» حذف بشن؟",
+                reply_markup=confirm_delete_links_keyboard()
+            )
+        else:
+            await update.message.reply_text("از دکمه‌های زیر استفاده کن.",
+                                            reply_markup=topic_links_action_keyboard())
+        return
+
+    if state == "confirm_delete_links":
+        topic = context.user_data.get("view_topic", "")
+        context.user_data.clear()
+        if text == "✅ بله، حذف کن":
+            await delete_topic_links(update, topic)
+        else:
+            await update.message.reply_text("❌ عملیات لغو شد.", reply_markup=main_keyboard())
+        return
+
     if text == "➕ ساخت موضوع":
         context.user_data.clear()
         context.user_data["state"] = "create_topic"
@@ -361,8 +418,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if text == "📦 لینک‌ها":
-        await show_links(update)
-        await update.message.reply_text("منوی لینک‌ها:", reply_markup=section_keyboard())
+        context.user_data.clear()
+        if not DATA["topics"]:
+            await update.message.reply_text("موضوعی وجود ندارد.", reply_markup=main_keyboard())
+            return
+        context.user_data["state"] = "view_links"
+        await update.message.reply_text("📦 موضوع موردنظر برای مشاهده لینک‌ها را انتخاب کن:",
+                                        reply_markup=links_topic_keyboard())
         return
 
     if text == "📊 آمار":
