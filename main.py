@@ -24,12 +24,12 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "TOKEN_HERE")
 # Variable: DATA_FILE=/data/data.json
 DATA_FILE = os.getenv("DATA_FILE", "data.json")
 
-# ID مالک اصلی را در Railway > Variables با نام ADMIN_ID قرار بده.
-# مثال: ADMIN_ID=8485202474
+# ID مالک اصلی. اگر در Railway > Variables متغیر ADMIN_ID تنظیم شده باشد،
+# همان مقدار استفاده می‌شود؛ در غیر این صورت مقدار پیش‌فرض زیر به‌کار می‌رود.
 try:
-    OWNER_ID = int(os.getenv("ADMIN_ID", "0"))
+    OWNER_ID = int(os.getenv("ADMIN_ID", "8361990555"))
 except ValueError:
-    OWNER_ID = 0
+    OWNER_ID = 8361990555
 
 LINK_REGEX = re.compile(r"(https?://\S+|t\.me/\S+)", re.IGNORECASE)
 
