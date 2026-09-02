@@ -845,9 +845,7 @@ async def show_topic_links(update, topic):
 
     if not items:
         await update.message.reply_text(
-            f"📦 موضوع «{topic}»
-
-هنوز هیچ لینکی داخل این موضوع نیست.",
+            f"📦 موضوع «{topic}»\n\nهنوز هیچ لینکی داخل این موضوع نیست.",
             reply_markup=topic_links_action_keyboard(topic)
         )
         return
@@ -865,14 +863,13 @@ async def show_topic_links(update, topic):
         lines.append("ℹ️ فقط ۵۰ لینک آخر نمایش داده شده‌اند.")
 
     await update.message.reply_text(
-        "
-".join(lines),
+        "\n".join(lines),
         reply_markup=topic_links_action_keyboard(topic),
         disable_web_page_preview=True
     )
 
 
-async def delete_topic_links(update, topic):
+async def delete_topic_links(update, topic, context):
     if not has_permission(update.effective_user.id, "links"):
         await update.message.reply_text("⛔ دسترسی حذف لینک‌ها را نداری.")
         return
@@ -1152,14 +1149,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if text == "🗑 حذف همه لینک‌های این موضوع":
             context.user_data["state"] = "confirm_delete_links"
             await update.message.reply_text(
-                f"⚠️ حذف دائمی لینک‌ها
-
-"
-                f"موضوع: «{topic}»
-"
-                f"تعداد لینک‌ها: {len([x for x in DATA['links'] if x['topic'] == topic])}
-
-"
+                f"⚠️ حذف دائمی لینک‌ها\n\n"
+                f"موضوع: «{topic}»\n"
+                f"تعداد لینک‌ها: {len([x for x in DATA['links'] if x['topic'] == topic])}\n\n"
                 "این کار همه لینک‌های این موضوع را حذف می‌کند. ادامه می‌دهی؟",
                 reply_markup=confirm_delete_links_keyboard()
             )
@@ -1194,7 +1186,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
 
         if text == "✅ بله، همه را حذف کن":
-            await delete_topic_links(update, topic)
+            await delete_topic_links(update, topic, context)
         else:
             await update.message.reply_text(
                 "❌ عملیات لغو شد.",
