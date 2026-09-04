@@ -64,6 +64,9 @@ def load_data():
             data.setdefault(key, value)
 
         # سازگاری با نسخه‌های قدیمی
+        # موضوع فعال دیگر سراسری نیست و در context.user_data هر کاربر نگهداری می‌شود.
+        data.pop("active_topic", None)
+
         if not isinstance(data.get("admins"), list):
             data["admins"] = []
 
@@ -232,9 +235,6 @@ def main_keyboard(user_id=None):
 
     if user_id is not None and is_admin(user_id):
         rows.append(["👨‍💼 مدیریت ادمین‌ها"])
-
-    if DATA["active_topic"]:
-        rows.insert(1, ["🔙 خروج از موضوع"])
 
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
@@ -683,7 +683,7 @@ async def edit_permissions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def create_topic(update, name):
+async def create_topic(update, name, context):
     if not has_permission(update.effective_user.id, "topics"):
         await update.message.reply_text("⛔ دسترسی مدیریت موضوع‌ها را نداری.")
         return
@@ -706,8 +706,7 @@ async def create_topic(update, name):
 
     save_data()
 
-    DATA["active_topic"] = name
-    save_data()
+    context.user_data["active_topic"] = name
 
     await update.message.reply_text(
         f"✅ موضوع «{name}» ساخته شد و فعال شد.\n"
@@ -729,8 +728,8 @@ async def delete_topic(update, name):
 
     DATA["topics"].remove(name)
 
-    if DATA["active_topic"] == name:
-        DATA["active_topic"] = ""
+    if context.user_data.get("active_topic") == name:
+        context.user_data.pop("active_topic", None)
 
     DATA["logs"].append({
         "action": "delete_topic",
@@ -741,7 +740,7 @@ async def delete_topic(update, name):
 
     await update.message.reply_text(
         "✅ موضوع حذف شد.",
-        reply_markup=topic_keyboard() if DATA["active_topic"] else main_keyboard(update.effective_user.id)
+        reply_markup=topic_keyboard() if context.user_data.get("active_topic") else main_keyboard(update.effective_user.id)
     )
 
 
@@ -757,13 +756,12 @@ async def show_topics(update):
     text = "📋 موضوع‌ها:\n\n"
 
     for topic in DATA["topics"]:
-        marker = " 🟢" if topic == DATA["active_topic"] else ""
-        text += f"• {topic}{marker}\n"
+        text += f"• {topic}\n"
 
     await update.message.reply_text(text)
 
 
-async def select_topic(update, topic):
+async def select_topic(update, topic, context):
     if not has_permission(update.effective_user.id, "topics"):
         await update.message.reply_text("⛔ دسترسی موضوع‌ها را نداری.")
         return
@@ -777,8 +775,7 @@ async def select_topic(update, topic):
         )
         return
 
-    DATA["active_topic"] = topic
-    save_data()
+    context.user_data["active_topic"] = topic
 
     await update.message.reply_text(
         f"✅ وارد موضوع «{topic}» شدی.\n"
@@ -787,9 +784,8 @@ async def select_topic(update, topic):
     )
 
 
-async def exit_topic(update):
-    DATA["active_topic"] = ""
-    save_data()
+async def exit_topic(update, context):
+    context.user_data.pop("active_topic", None)
 
     await update.message.reply_text(
         "🔙 از موضوع خارج شدی.",
@@ -797,12 +793,12 @@ async def exit_topic(update):
     )
 
 
-async def save_links(update, links):
+async def save_links(update, links, context):
     if not has_permission(update.effective_user.id, "links"):
         await update.message.reply_text("⛔ دسترسی ذخیره لینک نداری.")
         return
 
-    topic = DATA["active_topic"]
+    topic = context.user_data.get("active_topic", "")
 
     if not topic:
         await update.message.reply_text(
@@ -813,7 +809,12 @@ async def save_links(update, links):
     count = 0
 
     for link in links:
-        exists = any(x["url"] == link for x in DATA["links"])
+        # تکراری بودن فقط داخل همان موضوع بررسی می‌شود.
+        # یک لینک می‌تواند در دو موضوع متفاوت ذخیره شود.
+        exists = any(
+            x["url"] == link and x.get("topic") == topic
+            for x in DATA["links"]
+        )
 
         if exists:
             continue
@@ -1093,12 +1094,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text == "🚪 خروج از موضوع":
         context.user_data.clear()
-        await exit_topic(update)
+        await exit_topic(update, context)
         return
 
     if state == "create_topic":
         context.user_data.clear()
-        await create_topic(update, text)
+        await create_topic(update, text, context)
         return
 
     if state == "delete_topic":
@@ -1115,7 +1116,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if state == "select_topic":
         if text in DATA["topics"]:
             context.user_data.clear()
-            await select_topic(update, text)
+            await select_topic(update, text, context)
         else:
             await update.message.reply_text(
                 "لطفاً یکی از موضوع‌های موجود را انتخاب کن.",
@@ -1251,7 +1252,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text in DATA["topics"]:
         context.user_data.clear()
-        await select_topic(update, text)
+        await select_topic(update, text, context)
         return
 
     if text == "📋 موضوع‌ها":
@@ -1285,7 +1286,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     links = extract_links(text)
     if links:
-        await save_links(update, links)
+        await save_links(update, links, context)
         return
 
     await update.message.reply_text(
