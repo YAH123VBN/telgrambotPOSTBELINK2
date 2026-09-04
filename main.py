@@ -715,7 +715,7 @@ async def create_topic(update, name, context):
     )
 
 
-async def delete_topic(update, name):
+async def delete_topic(update, name, context):
     if not has_permission(update.effective_user.id, "topics"):
         await update.message.reply_text("⛔ دسترسی مدیریت موضوع‌ها را نداری.")
         return
@@ -842,31 +842,42 @@ async def show_topic_links(update, topic):
         await update.message.reply_text("⛔ دسترسی مشاهده لینک‌ها نداری.")
         return
 
-    items = [x for x in DATA["links"] if x["topic"] == topic]
+    # فقط لینک‌هایی که دقیقاً متعلق به همین موضوع هستند.
+    items = [x for x in DATA["links"] if x.get("topic") == topic]
 
     if not items:
         await update.message.reply_text(
-            f"📦 موضوع «{topic}»\n\nهنوز هیچ لینکی داخل این موضوع نیست.",
+            f"📦 لینک‌های موضوع «{topic}»\n"
+            f"🔢 تعداد کل: 0",
             reply_markup=topic_links_action_keyboard(topic)
         )
         return
 
-    # آخرین 50 لینک را نمایش می‌دهیم تا پیام‌های بسیار بزرگ ساخته نشود.
+    # حداکثر 50 لینک آخر را نشان می‌دهیم.
     visible = items[-50:]
-    lines = [f"📦 لینک‌های موضوع «{topic}»", f"🔢 تعداد کل: {len(items)}", ""]
-
     start_number = len(items) - len(visible) + 1
+
+    # سربرگ در یک پیام جدا.
+    await update.message.reply_text(
+        f"📦 لینک‌های موضوع «{topic}»\n"
+        f"🔢 تعداد کل: {len(items)}",
+        disable_web_page_preview=True
+    )
+
+    # هر لینک دقیقاً در یک پیام جداگانه ارسال می‌شود.
     for number, item in enumerate(visible, start_number):
-        lines.append(f"{number}️⃣ {item['url']}")
+        await update.message.reply_text(
+            f"{number}️⃣ {item['url']}",
+            disable_web_page_preview=True
+        )
 
     if len(items) > 50:
-        lines.append("")
-        lines.append("ℹ️ فقط ۵۰ لینک آخر نمایش داده شده‌اند.")
+        await update.message.reply_text("ℹ️ فقط ۵۰ لینک آخر نمایش داده شد.")
 
+    # منوی مدیریت را بعد از آخرین لینک می‌فرستیم.
     await update.message.reply_text(
-        "\n".join(lines),
-        reply_markup=topic_links_action_keyboard(topic),
-        disable_web_page_preview=True
+        "مدیریت لینک‌های این موضوع:",
+        reply_markup=topic_links_action_keyboard(topic)
     )
 
 
@@ -1105,7 +1116,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if state == "delete_topic":
         if text in DATA["topics"]:
             context.user_data.clear()
-            await delete_topic(update, text)
+            await delete_topic(update, text, context)
         else:
             await update.message.reply_text(
                 "لطفاً یکی از موضوع‌های موجود را انتخاب کن.",
